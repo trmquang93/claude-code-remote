@@ -179,42 +179,94 @@ install_dtach() {
     refresh_command_cache
 }
 
+install_ttyd_from_package() {
+    case "$PACKAGE_MANAGER" in
+        apt-get)
+            run_as_root "apt-get update && apt-get install -y ttyd" || return 1
+            ;;
+        dnf)
+            run_as_root "dnf install -y ttyd" || return 1
+            ;;
+        yum)
+            run_as_root "yum install -y ttyd" || return 1
+            ;;
+        pacman)
+            run_as_root "pacman -Sy --noconfirm ttyd" || return 1
+            ;;
+        zypper)
+            run_as_root "zypper --non-interactive install ttyd" || return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_ttyd_from_binary() {
+    local arch url tmpfile dst
+
+    case "$(uname -m)" in
+        x86_64|amd64)
+            arch="x86_64" ;;
+        aarch64|arm64)
+            arch="aarch64" ;;
+        *)
+            print_warning "Unsupported CPU architecture for automatic ttyd binary install: $(uname -m)"
+            return 1 ;;
+    esac
+
+    # Use a specific, known-good ttyd release to avoid surprises.
+    url="https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.${arch}"
+    tmpfile="/tmp/ttyd.${arch}"
+    dst="$HOME/.local/bin/ttyd"
+
+    print_info "Installing ttyd ${url##*/} to $dst..."
+    mkdir -p "$(dirname "$dst")"
+    if ! curl -fsSL "$url" -o "$tmpfile"; then
+        print_warning "Failed to download ttyd binary from $url"
+        return 1
+    fi
+    chmod +x "$tmpfile"
+    mv "$tmpfile" "$dst"
+}
+
 install_ttyd() {
+    # If ttyd is already present, prefer the existing installation.
     if command_exists ttyd; then
+        print_success "ttyd installed at: $(command -v ttyd)"
         return 0
     fi
 
-    print_info "Installing ttyd from the official snap package..."
-    case "$PACKAGE_MANAGER" in
-        apt-get)
-            run_as_root "apt-get update && apt-get install -y snapd"
-            ;;
-        dnf)
-            run_as_root "dnf install -y snapd"
-            ;;
-        yum)
-            run_as_root "yum install -y snapd"
-            ;;
-        pacman)
-            run_as_root "pacman -Sy --noconfirm snapd"
-            ;;
-        zypper)
-            run_as_root "zypper --non-interactive install snapd"
-            ;;
-        *)
-            print_error "Automatic ttyd install is unsupported on this Linux distribution"
-            exit 1
-            ;;
-    esac
+    print_info "ttyd not found; attempting to install from package manager..."
+    if install_ttyd_from_package; then
+        refresh_command_cache
+        if command_exists ttyd; then
+            print_success "ttyd installed via $PACKAGE_MANAGER: $(command -v ttyd)"
+            return 0
+        fi
+        print_warning "Package manager reported success but ttyd is still missing from PATH."
+    else
+        print_warning "Package manager does not provide ttyd or installation failed."
+    fi
 
-    run_as_root "systemctl enable --now snapd.socket"
-    run_as_root "ln -sf /var/lib/snapd/snap /snap"
-    run_as_root "snap install ttyd --classic"
-    refresh_command_cache
-    wait_for_command ttyd 20 || {
-        print_error "ttyd install completed but the ttyd command is still unavailable"
-        exit 1
-    }
+    print_info "Attempting to install ttyd from official binary release..."
+    if install_ttyd_from_binary; then
+        refresh_command_cache
+        if command_exists ttyd; then
+            print_success "ttyd installed from official binary: $(command -v ttyd)"
+            return 0
+        fi
+        print_warning "Binary ttyd install completed but ttyd is not on PATH."
+    else
+        print_warning "Automatic ttyd binary install failed."
+    fi
+
+    print_error "ttyd is not installed."
+    echo ""
+    echo "Please install ttyd manually (for example from your distribution packages or"
+    echo "from the official releases at: https://github.com/tsl0922/ttyd/releases) and"
+    echo "ensure 'ttyd' is on your PATH, then re-run this setup script."
+    exit 1
 }
 
 install_claude() {
