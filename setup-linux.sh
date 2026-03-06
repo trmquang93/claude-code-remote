@@ -508,6 +508,9 @@ print_header "Step 3: Cloudflare Setup"
 
 if [[ "$USE_CLOUDFLARE" == true ]]; then
     mkdir -p "$HOME/.cloudflared"
+    TUNNEL_NAME=""
+    TUNNEL_ID=""
+    TUNNEL_CREDENTIALS_FILE=""
 
     if [[ ! -f "$HOME/.cloudflared/cert.pem" ]]; then
         print_info "Cloudflared needs to authenticate with your Cloudflare account"
@@ -523,17 +526,37 @@ if [[ "$USE_CLOUDFLARE" == true ]]; then
     fi
 
     print_success "Cloudflared authenticated"
-    print_info "Creating Cloudflare tunnel..."
-    TUNNEL_NAME="claude-code-$(date +%s)"
-    TUNNEL_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME")
-    TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+    if [[ -f "$HOME/.cloudflared/config.yml" ]]; then
+        EXISTING_TUNNEL=$(awk -F': *' '$1=="tunnel"{print $2; exit}' "$HOME/.cloudflared/config.yml")
+        EXISTING_CREDENTIALS_FILE=$(awk -F': *' '$1=="credentials-file"{print $2; exit}' "$HOME/.cloudflared/config.yml")
 
-    if [[ -z "$TUNNEL_ID" ]]; then
-        print_error "Failed to create tunnel"
-        exit 1
+        if [[ -n "$EXISTING_TUNNEL" && -n "$EXISTING_CREDENTIALS_FILE" && -f "$EXISTING_CREDENTIALS_FILE" ]]; then
+            if cloudflared tunnel info "$EXISTING_TUNNEL" >/dev/null 2>&1; then
+                TUNNEL_NAME="$EXISTING_TUNNEL"
+                TUNNEL_CREDENTIALS_FILE="$EXISTING_CREDENTIALS_FILE"
+                TUNNEL_ID=$(basename "$TUNNEL_CREDENTIALS_FILE" .json)
+                print_success "Reusing existing tunnel: $TUNNEL_NAME (ID: $TUNNEL_ID)"
+            else
+                print_warning "Existing tunnel '$EXISTING_TUNNEL' from ~/.cloudflared/config.yml is not accessible; creating a new one"
+            fi
+        fi
     fi
 
-    print_success "Tunnel created: $TUNNEL_NAME (ID: $TUNNEL_ID)"
+    if [[ -z "$TUNNEL_NAME" || -z "$TUNNEL_ID" ]]; then
+        print_info "Creating Cloudflare tunnel..."
+        TUNNEL_NAME="claude-code-$(date +%s)"
+        TUNNEL_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME")
+        TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+
+        if [[ -z "$TUNNEL_ID" ]]; then
+            print_error "Failed to create tunnel"
+            exit 1
+        fi
+
+        TUNNEL_CREDENTIALS_FILE="$HOME/.cloudflared/$TUNNEL_ID.json"
+        print_success "Tunnel created: $TUNNEL_NAME (ID: $TUNNEL_ID)"
+    fi
+
     print_info "Routing DNS..."
     cloudflared tunnel route dns --overwrite-dns "$TUNNEL_NAME" "$FULL_DOMAIN"
     print_success "DNS routed: $FULL_DOMAIN → tunnel"
@@ -550,7 +573,7 @@ if [[ "$USE_CLOUDFLARE" == true ]]; then
     print_info "Creating cloudflared config..."
     cat > "$HOME/.cloudflared/config.yml" <<CONFIG
  tunnel: $TUNNEL_NAME
- credentials-file: $HOME/.cloudflared/$TUNNEL_ID.json
+ credentials-file: $TUNNEL_CREDENTIALS_FILE
  
  ingress:
    - hostname: $FULL_DOMAIN
@@ -619,7 +642,7 @@ Tunnel ID: $TUNNEL_ID
 
 # Configuration Files:
 - Cloudflared config: ~/.cloudflared/config.yml
-- Cloudflared credentials: ~/.cloudflared/$TUNNEL_ID.json
+- Cloudflared credentials: $TUNNEL_CREDENTIALS_FILE
 - auth-proxy service: $AUTH_SERVICE_PATH
 - cloudflared service: $CLOUDFLARED_SERVICE_PATH
 
