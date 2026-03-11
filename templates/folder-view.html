@@ -203,7 +203,8 @@
       background: var(--bg-dark);
       border: 1px solid var(--terminal-green);
       min-width: 180px;
-      z-index: 100;
+      max-width: calc(100vw - 8px);
+      z-index: 10000;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     }
 
@@ -262,6 +263,7 @@
       background: var(--bg-black);
       overflow: hidden;
       position: relative;
+      z-index: 0;
     }
 
     .terminal-iframe {
@@ -1360,9 +1362,25 @@
       if (e.target.closest('#new-tab-btn')) {
         var dropdown = document.getElementById('new-tab-dropdown');
         var btn = document.getElementById('new-tab-btn');
+
+        // Move dropdown to body so it escapes iframe stacking context
+        if (dropdown.parentNode !== document.body) {
+          document.body.appendChild(dropdown);
+        }
+
         var rect = btn.getBoundingClientRect();
-        dropdown.style.top = rect.bottom + 'px';
-        dropdown.style.left = rect.left + 'px';
+        var top = rect.bottom;
+        var left = rect.left;
+
+        // Ensure dropdown doesn't overflow right edge of viewport
+        var dropdownWidth = Math.max(180, dropdown.offsetWidth);
+        var viewportWidth = window.innerWidth;
+        if (left + dropdownWidth > viewportWidth) {
+          left = Math.max(4, viewportWidth - dropdownWidth - 4);
+        }
+
+        dropdown.style.top = top + 'px';
+        dropdown.style.left = left + 'px';
         dropdown.classList.toggle('open');
         return;
       }
@@ -1384,7 +1402,7 @@
 
     // Close dropdown when clicking outside
     document.addEventListener('click', function(e) {
-      if (!e.target.closest('#new-tab-wrapper')) {
+      if (!e.target.closest('#new-tab-wrapper') && !e.target.closest('#new-tab-dropdown')) {
         document.getElementById('new-tab-dropdown').classList.remove('open');
       }
     });
